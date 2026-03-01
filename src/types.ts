@@ -64,3 +64,18 @@ export interface BankAccount {
   type: string;
   created_at: string;
 }
+
+export interface FileAsset {
+  id: number;
+  name: string;
+  path: string;
+  size: number;
+  type: string;
+  created_at: string;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+}

@@ -83,6 +83,25 @@ db.exec(`
     type TEXT DEFAULT 'savings',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    size INTEGER,
+    type TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+  );
 `);
 
 // Seed default categories if empty or missing
@@ -136,7 +155,63 @@ async function startServer() {
   app.use(express.json());
   app.use("/public", express.static("public"));
 
-  // API Routes
+  // Multer setup for general files
+const fileStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = "public/uploads/";
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + "-" + file.originalname);
+  },
+});
+const uploadFile = multer({ storage: fileStorage });
+
+// API Routes
+  app.post("/api/auth/login", (req, res) => {
+    const { email, password } = req.body;
+    const user = db.prepare("SELECT * FROM users WHERE email = ? AND password = ?").get(email, password);
+    if (user) {
+      res.json({ success: true, user: { id: user.id, email: user.email, name: user.name } });
+    } else {
+      res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
+  });
+
+  app.post("/api/auth/register", (req, res) => {
+    const { email, password, name } = req.body;
+    try {
+      const result = db.prepare("INSERT INTO users (email, password, name) VALUES (?, ?, ?)").run(email, password, name);
+      res.json({ success: true, user: { id: result.lastInsertRowid, email, name } });
+    } catch (e) {
+      res.status(400).json({ success: false, message: "User already exists" });
+    }
+  });
+
+  app.get("/api/files", (req, res) => {
+    const files = db.prepare("SELECT * FROM files ORDER BY created_at DESC").all();
+    res.json(files);
+  });
+
+  app.post("/api/files", uploadFile.single("file"), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const { originalname, filename, size, mimetype } = req.file;
+    const path = "/public/uploads/" + filename;
+    const result = db.prepare("INSERT INTO files (name, path, size, type) VALUES (?, ?, ?, ?)").run(originalname, path, size, mimetype);
+    res.json({ id: result.lastInsertRowid, name: originalname, path, size, type: mimetype });
+  });
+
+  app.delete("/api/files/:id", (req, res) => {
+    const file = db.prepare("SELECT path FROM files WHERE id = ?").get(req.params.id);
+    if (file) {
+      const fullPath = path.join(process.cwd(), file.path);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      db.prepare("DELETE FROM files WHERE id = ?").run(req.params.id);
+    }
+    res.json({ success: true });
+  });
+
   app.get("/api/categories", (req, res) => {
     const categories = db.prepare("SELECT * FROM categories").all();
     res.json(categories);

@@ -21,7 +21,13 @@ import {
   Clock,
   AlertCircle,
   Building2,
-  CreditCard
+  CreditCard,
+  FileText,
+  LogOut,
+  User as UserIcon,
+  Lock,
+  Mail,
+  FileUp
 } from 'lucide-react';
 import { 
   PieChart, 
@@ -39,7 +45,7 @@ import {
 } from 'recharts';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, subMonths } from 'date-fns';
 import { cn } from './types';
-import type { Category, Transaction, Budget, SavingsGoal, RecurringTemplate, BankAccount } from './types';
+import type { Category, Transaction, Budget, SavingsGoal, RecurringTemplate, BankAccount, FileAsset, User } from './types';
 
 // Icons mapping for dynamic rendering
 import * as LucideIcons from 'lucide-react';
@@ -50,7 +56,15 @@ const IconRenderer = ({ name, className }: { name: string, className?: string })
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'budgets' | 'savings' | 'settings' | 'recurring' | 'banks'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'budgets' | 'savings' | 'settings' | 'recurring' | 'banks' | 'files'>('dashboard');
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' });
+  const [authError, setAuthError] = useState('');
+
   const [currency, setCurrency] = useState<{code: string, symbol: string}>(() => {
     const saved = localStorage.getItem('currency');
     return saved ? JSON.parse(saved) : { code: 'BDT', symbol: '৳' };
@@ -64,12 +78,14 @@ export default function App() {
   const [savings, setSavings] = useState<SavingsGoal[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTemplate[]>([]);
+  const [files, setFiles] = useState<FileAsset[]>([]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
   const [isAddBudgetModalOpen, setIsAddBudgetModalOpen] = useState(false);
   const [isAddSavingsModalOpen, setIsAddSavingsModalOpen] = useState(false);
   const [isAddFundsModalOpen, setIsAddFundsModalOpen] = useState(false);
   const [isAddRecurringModalOpen, setIsAddRecurringModalOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState<SavingsGoal | null>(null);
   const [loading, setLoading] = useState(true);
   const [profilePic, setProfilePic] = useState("/public/profile.jpg?t=" + Date.now());
@@ -136,13 +152,14 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      const [txRes, catRes, budgetRes, savingsRes, bankRes, recurringRes] = await Promise.all([
+      const [txRes, catRes, budgetRes, savingsRes, bankRes, recurringRes, fileRes] = await Promise.all([
         fetch('/api/transactions'),
         fetch('/api/categories'),
         fetch('/api/budgets'),
         fetch('/api/savings'),
         fetch('/api/bank-accounts'),
-        fetch('/api/recurring')
+        fetch('/api/recurring'),
+        fetch('/api/files')
       ]);
       
       setTransactions(await txRes.json());
@@ -151,6 +168,7 @@ export default function App() {
       setSavings(await savingsRes.json());
       setBankAccounts(await bankRes.json());
       setRecurringTemplates(await recurringRes.json());
+      setFiles(await fileRes.json());
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -338,6 +356,64 @@ export default function App() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/files', {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error);
+    }
+  };
+
+  const deleteFile = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this file?')) return;
+    try {
+      await fetch(`/api/files/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting file:', error);
+    }
+  };
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(authForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUser(data.user);
+        localStorage.setItem('user', JSON.stringify(data.user));
+      } else {
+        setAuthError(data.message || 'Authentication failed');
+      }
+    } catch (error) {
+      setAuthError('Server error. Please try again.');
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('user');
+    setActiveTab('dashboard');
+  };
+
   const deleteTransaction = async (id: number) => {
     if (!confirm('Are you sure you want to delete this transaction?')) return;
     try {
@@ -485,6 +561,96 @@ export default function App() {
     </div>
   );
 
+  if (!user) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 shadow-2xl border border-slate-200 dark:border-slate-800">
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-200 dark:shadow-none mb-4">
+            <Wallet className="text-white" size={32} />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight">Juel Rana</h1>
+          <p className="text-slate-500 font-medium">Personal Finance Manager</p>
+        </div>
+
+        <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-8">
+          <button 
+            onClick={() => setAuthMode('login')}
+            className={cn("flex-1 py-2.5 rounded-lg text-sm font-bold transition-all", authMode === 'login' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500")}
+          >
+            Login
+          </button>
+          <button 
+            onClick={() => setAuthMode('register')}
+            className={cn("flex-1 py-2.5 rounded-lg text-sm font-bold transition-all", authMode === 'register' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500")}
+          >
+            Register
+          </button>
+        </div>
+
+        <form onSubmit={handleAuth} className="space-y-5">
+          {authMode === 'register' && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Full Name</label>
+              <div className="relative">
+                <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="text" 
+                  required
+                  value={authForm.name}
+                  onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
+                  placeholder="Enter your name"
+                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Email Address</label>
+            <div className="relative">
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="email" 
+                required
+                value={authForm.email}
+                onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
+                placeholder="name@example.com"
+                className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Password</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="password" 
+                required
+                value={authForm.password}
+                onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
+                placeholder="••••••••"
+                className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+          </div>
+
+          {authError && (
+            <div className="flex items-center gap-2 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-2xl text-sm font-medium">
+              <AlertCircle size={18} />
+              {authError}
+            </div>
+          )}
+
+          <button 
+            type="submit"
+            className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none"
+          >
+            {authMode === 'login' ? 'Sign In' : 'Create Account'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-24 md:pb-0 md:pl-64">
       {/* Sidebar - Desktop */}
@@ -516,10 +682,18 @@ export default function App() {
           <NavItem active={activeTab === 'banks'} onClick={() => setActiveTab('banks')} icon={<Building2 size={20} />} label="Bank Accounts" />
           <NavItem active={activeTab === 'savings'} onClick={() => setActiveTab('savings')} icon={<Target size={20} />} label="Savings" />
           <NavItem active={activeTab === 'recurring'} onClick={() => setActiveTab('recurring')} icon={<Clock size={20} />} label="Recurring" />
+          <NavItem active={activeTab === 'files'} onClick={() => setActiveTab('files')} icon={<FileText size={20} />} label="Files" />
           <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label="Settings" />
         </nav>
 
-        <div className="mt-auto pt-6 border-t border-slate-200 dark:border-slate-800">
+        <div className="mt-auto pt-6 border-t border-slate-200 dark:border-slate-800 space-y-4">
+          <button 
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
+          >
+            <LogOut size={20} />
+            Logout
+          </button>
           <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl">
             <p className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold uppercase tracking-wider mb-1">Total Balance</p>
             <p className="text-2xl font-bold">{currency.symbol}{(balance + totalBankBalance).toLocaleString()}</p>
@@ -539,18 +713,54 @@ export default function App() {
           <Plus size={28} />
         </button>
 
-        <MobileNavItem active={activeTab === 'banks'} onClick={() => setActiveTab('banks')} icon={<Building2 size={20} />} label="Banks" />
+        <MobileNavItem active={activeTab === 'files'} onClick={() => setActiveTab('files')} icon={<FileText size={20} />} label="Files" />
         <button 
-          onClick={() => setActiveTab(activeTab === 'settings' ? 'dashboard' : 'settings')} 
+          onClick={() => setIsMobileMenuOpen(true)} 
           className={cn(
             "flex flex-col items-center gap-1 p-2 rounded-xl transition-all", 
-            activeTab === 'settings' ? "text-indigo-600" : "text-slate-400"
+            isMobileMenuOpen ? "text-indigo-600" : "text-slate-400"
           )}
         >
           <Settings size={20} />
-          <span className="text-[10px] font-bold">More</span>
+          <span className="text-[10px] font-bold">Menu</span>
         </button>
       </nav>
+
+      {/* Mobile Menu Drawer */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex justify-end">
+          <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)}></div>
+          <div className="relative w-72 h-full bg-white dark:bg-slate-900 shadow-2xl p-6 flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-xl font-bold">Menu</h3>
+              <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <nav className="space-y-2 flex-1 overflow-y-auto">
+              <NavItem active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} icon={<LayoutDashboard size={20} />} label="Dashboard" />
+              <NavItem active={activeTab === 'transactions'} onClick={() => { setActiveTab('transactions'); setIsMobileMenuOpen(false); }} icon={<ArrowUpRight size={20} />} label="Transactions" />
+              <NavItem active={activeTab === 'budgets'} onClick={() => { setActiveTab('budgets'); setIsMobileMenuOpen(false); }} icon={<PieChartIcon size={20} />} label="Budgets" />
+              <NavItem active={activeTab === 'banks'} onClick={() => { setActiveTab('banks'); setIsMobileMenuOpen(false); }} icon={<Building2 size={20} />} label="Bank Accounts" />
+              <NavItem active={activeTab === 'savings'} onClick={() => { setActiveTab('savings'); setIsMobileMenuOpen(false); }} icon={<Target size={20} />} label="Savings" />
+              <NavItem active={activeTab === 'recurring'} onClick={() => { setActiveTab('recurring'); setIsMobileMenuOpen(false); }} icon={<Clock size={20} />} label="Recurring" />
+              <NavItem active={activeTab === 'files'} onClick={() => { setActiveTab('files'); setIsMobileMenuOpen(false); }} icon={<FileText size={20} />} label="Files" />
+              <NavItem active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }} icon={<Settings size={20} />} label="Settings" />
+            </nav>
+
+            <div className="mt-auto pt-6 border-t border-slate-200 dark:border-slate-800">
+              <button 
+                onClick={() => { handleLogout(); setIsMobileMenuOpen(false); }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
+              >
+                <LogOut size={20} />
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="p-6 md:p-10 max-w-6xl mx-auto">
@@ -1076,6 +1286,55 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {activeTab === 'files' && (
+          <div className="space-y-8">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold">My Documents</h3>
+              <label className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-indigo-200 dark:shadow-none cursor-pointer">
+                <FileUp size={20} /> Upload File
+                <input type="file" onChange={handleFileUpload} className="hidden" />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {files.map(file => (
+                <div key={file.id} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm group relative">
+                  <button 
+                    onClick={() => deleteFile(file.id)}
+                    className="absolute top-4 right-4 p-2 text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 rounded-2xl flex items-center justify-center">
+                      <FileText size={24} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-bold truncate" title={file.name}>{file.name}</h4>
+                      <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(1)} KB • {format(parseISO(file.created_at), 'MMM d, yyyy')}</p>
+                    </div>
+                  </div>
+                  <a 
+                    href={file.path} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl text-sm font-bold transition-colors"
+                  >
+                    <Download size={16} /> Download
+                  </a>
+                </div>
+              ))}
+              {files.length === 0 && (
+                <div className="col-span-full py-20 text-center text-slate-400 bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+                  <FileText size={48} className="mx-auto mb-4 opacity-20" />
+                  <p className="font-medium">No files uploaded yet.</p>
+                  <p className="text-sm">Upload receipts, invoices, or statements.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Add Recurring Modal */}
@@ -1345,7 +1604,7 @@ export default function App() {
       {/* Add Budget Modal */}
       {isAddBudgetModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
               <h3 className="text-2xl font-bold">Set Monthly Budget</h3>
               <button onClick={() => setIsAddBudgetModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
@@ -1391,15 +1650,15 @@ export default function App() {
 
       {/* Add Savings Goal Modal */}
       {isAddSavingsModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300">
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="text-2xl font-bold">New Savings Goal</h3>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom md:zoom-in duration-300 max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center shrink-0">
+              <h3 className="text-xl font-bold">New Savings Goal</h3>
               <button onClick={() => setIsAddSavingsModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleAddSavings} className="space-y-6">
+            <form onSubmit={handleAddSavings} className="p-6 space-y-6 overflow-y-auto">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Goal Name</label>
                 <input 
@@ -1448,15 +1707,15 @@ export default function App() {
 
       {/* Add Funds Modal */}
       {isAddFundsModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300">
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="text-2xl font-bold">Add Funds to {selectedGoal?.name}</h3>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom md:zoom-in duration-300 max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center shrink-0">
+              <h3 className="text-xl font-bold">Add Funds</h3>
               <button onClick={() => setIsAddFundsModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-                <X size={24} />
+                <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleAddFunds} className="space-y-6">
+            <form onSubmit={handleAddFunds} className="p-6 space-y-6 overflow-y-auto">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Amount to Add</label>
                 <div className="relative">
@@ -1550,26 +1809,26 @@ function StatCard({ title, amount, icon, isPercent, color, currencySymbol }: { t
 
 function TransactionItem({ tx, onDelete, currencySymbol }: { tx: Transaction, onDelete: (id: number) => void | Promise<void>, currencySymbol: string, key?: React.Key }) {
   return (
-    <div className="flex items-center justify-between group py-1">
-      <div className="flex items-center gap-4">
+    <div className="flex items-center justify-between group py-2">
+      <div className="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
         {/* Enhanced Icon Container */}
         <div 
-          className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm transition-transform group-hover:scale-105"
+          className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl flex shrink-0 items-center justify-center shadow-sm transition-transform group-hover:scale-105"
           style={{ 
             backgroundColor: `${tx.category_color}15`, 
             color: tx.category_color,
             border: `1px solid ${tx.category_color}30`
           }}
         >
-          <IconRenderer name={tx.category_icon || 'HelpCircle'} className="w-6 h-6" />
+          <IconRenderer name={tx.category_icon || 'HelpCircle'} className="w-5 h-5 md:w-6 md:h-6" />
         </div>
         
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0.5 min-w-0">
           <div className="flex items-center gap-2">
-            <p className="font-bold text-slate-900 dark:text-slate-100 leading-tight">{tx.category_name}</p>
+            <p className="font-bold text-slate-900 dark:text-slate-100 leading-tight truncate">{tx.category_name}</p>
             {/* Type Badge */}
             <span className={cn(
-              "text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md",
+              "text-[9px] md:text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0",
               tx.type === 'income' 
                 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" 
                 : "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
@@ -1577,11 +1836,11 @@ function TransactionItem({ tx, onDelete, currencySymbol }: { tx: Transaction, on
               {tx.type}
             </span>
           </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
-            <span className="flex items-center gap-1"><Calendar size={12} /> {format(parseISO(tx.date), 'MMM d, yyyy')}</span>
+          <div className="flex items-center gap-2 md:gap-3 text-[10px] md:text-xs text-slate-500 font-medium">
+            <span className="flex items-center gap-1 shrink-0"><Calendar size={10} /> {format(parseISO(tx.date), 'MMM d')}</span>
             {tx.notes && (
-              <span className="flex items-center gap-1 max-w-[150px] truncate italic">
-                <div className="w-1 h-1 rounded-full bg-slate-300"></div>
+              <span className="flex items-center gap-1 truncate italic">
+                <div className="w-1 h-1 rounded-full bg-slate-300 shrink-0"></div>
                 {tx.notes}
               </span>
             )}
@@ -1589,10 +1848,10 @@ function TransactionItem({ tx, onDelete, currencySymbol }: { tx: Transaction, on
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 md:gap-4 shrink-0">
         <div className="text-right">
           <p className={cn(
-            "font-bold text-lg tracking-tight", 
+            "font-bold text-base md:text-lg tracking-tight", 
             tx.type === 'income' ? "text-emerald-600" : "text-rose-600"
           )}>
             {tx.type === 'income' ? '+' : '-'}{currencySymbol}{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -1601,10 +1860,10 @@ function TransactionItem({ tx, onDelete, currencySymbol }: { tx: Transaction, on
         
         <button 
           onClick={() => onDelete(tx.id)}
-          className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all"
+          className="md:opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl transition-all"
           title="Delete transaction"
         >
-          <Trash2 size={18} />
+          <Trash2 size={16} md:size={18} />
         </button>
       </div>
     </div>
