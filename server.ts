@@ -164,6 +164,11 @@ async function startServer() {
     res.json({ id: result.lastInsertRowid });
   });
 
+  app.delete("/api/transactions", (req, res) => {
+    db.prepare("DELETE FROM transactions").run();
+    res.json({ success: true });
+  });
+
   app.delete("/api/transactions/:id", (req, res) => {
     db.prepare("DELETE FROM transactions WHERE id = ?").run(req.params.id);
     res.json({ success: true });
@@ -184,6 +189,11 @@ async function startServer() {
     res.json({ id: result.lastInsertRowid });
   });
 
+  app.delete("/api/budgets/:id", (req, res) => {
+    db.prepare("DELETE FROM budgets WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
   app.get("/api/savings", (req, res) => {
     const goals = db.prepare("SELECT * FROM savings_goals").all();
     res.json(goals);
@@ -193,6 +203,11 @@ async function startServer() {
     const { name, target_amount, current_amount, deadline } = req.body;
     const result = db.prepare("INSERT INTO savings_goals (name, target_amount, current_amount, deadline) VALUES (?, ?, ?, ?)").run(name, target_amount, current_amount, deadline);
     res.json({ id: result.lastInsertRowid });
+  });
+
+  app.delete("/api/savings/:id", (req, res) => {
+    db.prepare("DELETE FROM savings_goals WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
   });
 
   app.get("/api/bank-accounts", (req, res) => {
@@ -230,6 +245,17 @@ async function startServer() {
     const { amount, type, category_id, frequency } = req.body;
     const result = db.prepare("INSERT INTO recurring_templates (amount, type, category_id, frequency) VALUES (?, ?, ?, ?)").run(amount, type, category_id, frequency);
     res.json({ id: result.lastInsertRowid });
+  });
+
+  app.patch("/api/recurring/:id", (req, res) => {
+    const { is_active } = req.body;
+    db.prepare("UPDATE recurring_templates SET is_active = ? WHERE id = ?").run(is_active ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/recurring/:id", (req, res) => {
+    db.prepare("DELETE FROM recurring_templates WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
   });
 
   app.post("/api/upload-profile", upload.single("profile"), (req, res) => {

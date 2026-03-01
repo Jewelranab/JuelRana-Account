@@ -51,15 +51,29 @@ const IconRenderer = ({ name, className }: { name: string, className?: string })
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'budgets' | 'savings' | 'settings' | 'recurring' | 'banks'>('dashboard');
+  const [currency, setCurrency] = useState<{code: string, symbol: string}>(() => {
+    const saved = localStorage.getItem('currency');
+    return saved ? JSON.parse(saved) : { code: 'BDT', symbol: '৳' };
+  });
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return localStorage.getItem('darkMode') === 'true';
+  });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [savings, setSavings] = useState<SavingsGoal[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringTemplate[]>([]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isAddBankModalOpen, setIsAddBankModalOpen] = useState(false);
+  const [isAddBudgetModalOpen, setIsAddBudgetModalOpen] = useState(false);
+  const [isAddSavingsModalOpen, setIsAddSavingsModalOpen] = useState(false);
+  const [isAddFundsModalOpen, setIsAddFundsModalOpen] = useState(false);
+  const [isAddRecurringModalOpen, setIsAddRecurringModalOpen] = useState(false);
+  const [selectedGoal, setSelectedGoal] = useState<SavingsGoal | null>(null);
   const [loading, setLoading] = useState(true);
   const [profilePic, setProfilePic] = useState("/public/profile.jpg?t=" + Date.now());
+  const [searchQuery, setSearchQuery] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,18 +94,55 @@ export default function App() {
     type: 'savings'
   });
 
+  const [newBudget, setNewBudget] = useState({
+    category_id: '',
+    amount: '',
+    month: new Date().getMonth() + 1,
+    year: new Date().getFullYear()
+  });
+
+  const [newSavings, setNewSavings] = useState({
+    name: '',
+    target_amount: '',
+    current_amount: '0',
+    deadline: ''
+  });
+
+  const [addFundsAmount, setAddFundsAmount] = useState('');
+
+  const [newRecurring, setNewRecurring] = useState({
+    amount: '',
+    type: 'expense' as 'income' | 'expense',
+    category_id: '',
+    frequency: 'monthly' as 'daily' | 'weekly' | 'monthly'
+  });
+
   useEffect(() => {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem('currency', JSON.stringify(currency));
+  }, [currency]);
+
+  useEffect(() => {
+    localStorage.setItem('darkMode', isDarkMode.toString());
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
   const fetchData = async () => {
     try {
-      const [txRes, catRes, budgetRes, savingsRes, bankRes] = await Promise.all([
+      const [txRes, catRes, budgetRes, savingsRes, bankRes, recurringRes] = await Promise.all([
         fetch('/api/transactions'),
         fetch('/api/categories'),
         fetch('/api/budgets'),
         fetch('/api/savings'),
-        fetch('/api/bank-accounts')
+        fetch('/api/bank-accounts'),
+        fetch('/api/recurring')
       ]);
       
       setTransactions(await txRes.json());
@@ -99,10 +150,140 @@ export default function App() {
       setBudgets(await budgetRes.json());
       setSavings(await savingsRes.json());
       setBankAccounts(await bankRes.json());
+      setRecurringTemplates(await recurringRes.json());
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleRecurringStatus = async (id: number, currentStatus: boolean) => {
+    try {
+      await fetch(`/api/recurring/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: !currentStatus })
+      });
+      fetchData();
+    } catch (error) {
+      console.error('Error toggling recurring status:', error);
+    }
+  };
+
+  const deleteRecurring = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this recurring transaction?')) return;
+    try {
+      await fetch(`/api/recurring/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting recurring transaction:', error);
+    }
+  };
+
+  const handleAddBudget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBudget.category_id || !newBudget.amount) return;
+
+    try {
+      const res = await fetch('/api/budgets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newBudget,
+          amount: parseFloat(newBudget.amount)
+        })
+      });
+      if (res.ok) {
+        setIsAddBudgetModalOpen(false);
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Error adding budget:', error);
+    }
+  };
+
+  const handleAddSavings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSavings.name || !newSavings.target_amount) return;
+
+    try {
+      const res = await fetch('/api/savings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newSavings,
+          target_amount: parseFloat(newSavings.target_amount),
+          current_amount: parseFloat(newSavings.current_amount || '0')
+        })
+      });
+      if (res.ok) {
+        setIsAddSavingsModalOpen(false);
+        setNewSavings({ name: '', target_amount: '', current_amount: '0', deadline: '' });
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Error adding savings goal:', error);
+    }
+  };
+
+  const handleAddFunds = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedGoal || !addFundsAmount) return;
+
+    try {
+      const newAmount = selectedGoal.current_amount + parseFloat(addFundsAmount);
+      const res = await fetch(`/api/savings/${selectedGoal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_amount: newAmount })
+      });
+      if (res.ok) {
+        setIsAddFundsModalOpen(false);
+        setAddFundsAmount('');
+        setSelectedGoal(null);
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Error adding funds:', error);
+    }
+  };
+
+  const deleteSavingsGoal = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this goal?')) return;
+    try {
+      await fetch(`/api/savings/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting savings goal:', error);
+    }
+  };
+
+  const handleAddRecurring = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRecurring.amount || !newRecurring.category_id) return;
+
+    try {
+      const res = await fetch('/api/recurring', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newRecurring,
+          amount: parseFloat(newRecurring.amount)
+        })
+      });
+      if (res.ok) {
+        setIsAddRecurringModalOpen(false);
+        setNewRecurring({
+          amount: '',
+          type: 'expense',
+          category_id: '',
+          frequency: 'monthly'
+        });
+        fetchData();
+      }
+    } catch (error) {
+      console.error('Error adding recurring transaction:', error);
     }
   };
 
@@ -167,6 +348,19 @@ export default function App() {
     }
   };
 
+  const handleDeleteAllTransactions = async () => {
+    if (!confirm('Are you sure you want to delete ALL transactions? This cannot be undone.')) return;
+    try {
+      const res = await fetch('/api/transactions', { method: 'DELETE' });
+      if (res.ok) {
+        fetchData();
+        alert('All transactions deleted successfully.');
+      }
+    } catch (error) {
+      console.error('Error deleting all transactions:', error);
+    }
+  };
+
   const handleAddBank = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBank.name || !newBank.bank_name || !newBank.balance) return;
@@ -205,6 +399,30 @@ export default function App() {
     } catch (error) {
       console.error('Error deleting bank account:', error);
     }
+  };
+
+  const handleExport = () => {
+    const headers = ['Date', 'Type', 'Category', 'Amount', 'Notes'];
+    const csvContent = [
+      headers.join(','),
+      ...transactions.map(tx => [
+        tx.date,
+        tx.type,
+        tx.category_name,
+        tx.amount,
+        `"${tx.notes || ''}"`
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `transactions_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Calculations
@@ -304,7 +522,7 @@ export default function App() {
         <div className="mt-auto pt-6 border-t border-slate-200 dark:border-slate-800">
           <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl">
             <p className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold uppercase tracking-wider mb-1">Total Balance</p>
-            <p className="text-2xl font-bold">৳{balance.toLocaleString()}</p>
+            <p className="text-2xl font-bold">{currency.symbol}{(balance + totalBankBalance).toLocaleString()}</p>
           </div>
         </div>
       </aside>
@@ -355,10 +573,10 @@ export default function App() {
           <div className="space-y-8">
             {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard title="Total Balance" amount={balance + totalBankBalance} icon={<Wallet className="text-indigo-600" />} color="indigo" />
-              <StatCard title="Bank Balance" amount={totalBankBalance} icon={<Building2 className="text-indigo-600" />} color="indigo" />
-              <StatCard title="Income" amount={totalIncome} icon={<TrendingUp className="text-emerald-600" />} color="emerald" />
-              <StatCard title="Expenses" amount={totalExpense} icon={<TrendingDown className="text-rose-600" />} color="rose" />
+              <StatCard title="Total Balance" amount={balance + totalBankBalance} icon={<Wallet className="text-indigo-600" />} color="indigo" currencySymbol={currency.symbol} />
+              <StatCard title="Bank Balance" amount={totalBankBalance} icon={<Building2 className="text-indigo-600" />} color="indigo" currencySymbol={currency.symbol} />
+              <StatCard title="Income" amount={totalIncome} icon={<TrendingUp className="text-emerald-600" />} color="emerald" currencySymbol={currency.symbol} />
+              <StatCard title="Expenses" amount={totalExpense} icon={<TrendingDown className="text-rose-600" />} color="rose" currencySymbol={currency.symbol} />
             </div>
 
             {/* Charts Row */}
@@ -439,7 +657,7 @@ export default function App() {
               </div>
               <div className="space-y-4">
                 {transactions.slice(0, 5).map((tx) => (
-                  <TransactionItem key={tx.id} tx={tx} onDelete={deleteTransaction} />
+                  <TransactionItem key={tx.id} tx={tx} onDelete={deleteTransaction} currencySymbol={currency.symbol} />
                 ))}
                 {transactions.length === 0 && (
                   <div className="py-10 text-center text-slate-400">
@@ -490,7 +708,7 @@ export default function App() {
                     <div className="flex justify-between items-end">
                       <div>
                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Current Balance</p>
-                        <p className="text-2xl font-bold text-indigo-600">৳{acc.balance.toLocaleString()}</p>
+                        <p className="text-2xl font-bold text-indigo-600">{currency.symbol}{acc.balance.toLocaleString()}</p>
                       </div>
                       <span className="px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold uppercase rounded-full">
                         {acc.type}
@@ -525,27 +743,36 @@ export default function App() {
                 <input 
                   type="text" 
                   placeholder="Search transactions..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
               </div>
-              <button className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                <Filter size={20} /> Filter
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+              <button 
+                onClick={handleExport}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
                 <Download size={20} /> Export
               </button>
             </div>
 
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                {transactions.map((tx) => (
-                  <div key={tx.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <TransactionItem tx={tx} onDelete={deleteTransaction} />
-                  </div>
-                ))}
-                {transactions.length === 0 && (
+              <div className="divide-y divide-slate-100 dark:divide-slate-800 p-6 space-y-4">
+                {transactions
+                  .filter(tx => 
+                    tx.category_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                    tx.notes?.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((tx) => (
+                    <TransactionItem key={tx.id} tx={tx} onDelete={deleteTransaction} currencySymbol={currency.symbol} />
+                  ))
+                }
+                {transactions.filter(tx => 
+                    tx.category_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                    tx.notes?.toLowerCase().includes(searchQuery.toLowerCase())
+                  ).length === 0 && (
                   <div className="py-20 text-center text-slate-400">
-                    <p>No transactions found.</p>
+                    <p>No transactions found matching your search.</p>
                   </div>
                 )}
               </div>
@@ -555,6 +782,16 @@ export default function App() {
 
         {activeTab === 'budgets' && (
           <div className="space-y-8">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold">Monthly Budgets</h3>
+              <button 
+                onClick={() => setIsAddBudgetModalOpen(true)}
+                className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 dark:shadow-none"
+              >
+                <Plus size={18} /> Set Budget
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {categories.filter(c => c.type === 'expense').map(cat => {
                 const budget = budgets.find(b => b.category_id === cat.id);
@@ -576,7 +813,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-bold">৳{spent.toLocaleString()} / <span className="text-slate-400">৳{budget?.amount.toLocaleString() || '0'}</span></p>
+                        <p className="font-bold">{currency.symbol}{spent.toLocaleString()} / <span className="text-slate-400">{currency.symbol}{budget?.amount.toLocaleString() || '0'}</span></p>
                         <p className={cn("text-xs font-medium", progress > 100 ? "text-rose-500" : progress > 80 ? "text-amber-500" : "text-emerald-500")}>
                           {progress.toFixed(0)}% used
                         </p>
@@ -590,11 +827,24 @@ export default function App() {
                       ></div>
                     </div>
 
-                    {!budget && (
-                      <button className="w-full py-2 text-sm font-medium text-indigo-600 border border-indigo-100 dark:border-indigo-900/30 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
-                        Set Budget
-                      </button>
-                    )}
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs text-slate-500">
+                        {progress > 100 
+                          ? `Over budget by ${currency.symbol}${(spent - (budget?.amount || 0)).toLocaleString()}` 
+                          : `${currency.symbol}${((budget?.amount || 0) - spent).toLocaleString()} remaining`}
+                      </p>
+                      {!budget && (
+                        <button 
+                          onClick={() => {
+                            setNewBudget({...newBudget, category_id: cat.id.toString()});
+                            setIsAddBudgetModalOpen(true);
+                          }}
+                          className="text-xs font-bold text-indigo-600 hover:underline"
+                        >
+                          Set Budget
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -604,18 +854,35 @@ export default function App() {
 
         {activeTab === 'savings' && (
           <div className="space-y-8">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold">Savings Goals</h3>
+              <button 
+                onClick={() => setIsAddSavingsModalOpen(true)}
+                className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 dark:shadow-none"
+              >
+                <Plus size={18} /> New Goal
+              </button>
+            </div>
+
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {savings.map(goal => {
                 const progress = (goal.current_amount / goal.target_amount) * 100;
                 return (
-                  <div key={goal.id} className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                  <div key={goal.id} className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm relative group">
+                    <button 
+                      onClick={() => deleteSavingsGoal(goal.id)}
+                      className="absolute top-4 right-4 p-2 text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+
                     <div className="flex justify-between items-start mb-6">
                       <div className="p-3 bg-amber-50 dark:bg-amber-900/20 text-amber-600 rounded-2xl">
                         <Target size={24} />
                       </div>
-                      <div className="text-right">
+                      <div className="text-right pr-8">
                         <h4 className="font-bold text-lg">{goal.name}</h4>
-                        <p className="text-sm text-slate-500">Goal: ৳{goal.target_amount.toLocaleString()}</p>
+                        <p className="text-sm text-slate-500">Goal: {currency.symbol}{goal.target_amount.toLocaleString()}</p>
                       </div>
                     </div>
 
@@ -627,7 +894,7 @@ export default function App() {
                       <div className="h-3 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                         <div 
                           className="h-full bg-amber-500 transition-all duration-500"
-                          style={{width: `${progress}%`}}
+                          style={{width: `${Math.min(progress, 100)}%`}}
                         ></div>
                       </div>
                     </div>
@@ -635,9 +902,15 @@ export default function App() {
                     <div className="flex justify-between items-center">
                       <div>
                         <p className="text-xs text-slate-500">Saved</p>
-                        <p className="font-bold text-indigo-600">৳{goal.current_amount.toLocaleString()}</p>
+                        <p className="font-bold text-indigo-600">{currency.symbol}{goal.current_amount.toLocaleString()}</p>
                       </div>
-                      <button className="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                      <button 
+                        onClick={() => {
+                          setSelectedGoal(goal);
+                          setIsAddFundsModalOpen(true);
+                        }}
+                        className="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      >
                         Add Funds
                       </button>
                     </div>
@@ -645,7 +918,10 @@ export default function App() {
                 );
               })}
               
-              <button className="flex flex-col items-center justify-center gap-3 p-6 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-600 transition-all group">
+              <button 
+                onClick={() => setIsAddSavingsModalOpen(true)}
+                className="flex flex-col items-center justify-center gap-3 p-6 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-600 transition-all group"
+              >
                 <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/20 transition-colors">
                   <Plus className="text-slate-400 group-hover:text-indigo-600" size={24} />
                 </div>
@@ -697,7 +973,15 @@ export default function App() {
                     <p className="font-semibold">Currency</p>
                     <p className="text-sm text-slate-500">Choose your preferred currency symbol</p>
                   </div>
-                  <select className="bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-2 font-medium outline-none">
+                  <select 
+                    value={currency.code}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      const symbols: Record<string, string> = { BDT: '৳', USD: '$', EUR: '€', GBP: '£' };
+                      setCurrency({ code, symbol: symbols[code] });
+                    }}
+                    className="bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-2 font-medium outline-none"
+                  >
                     <option value="BDT">BDT (৳)</option>
                     <option value="USD">USD ($)</option>
                     <option value="EUR">EUR (€)</option>
@@ -709,8 +993,17 @@ export default function App() {
                     <p className="font-semibold">Dark Mode</p>
                     <p className="text-sm text-slate-500">Toggle between light and dark themes</p>
                   </div>
-                  <button className="w-12 h-6 bg-indigo-600 rounded-full relative transition-all">
-                    <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
+                  <button 
+                    onClick={() => setIsDarkMode(!isDarkMode)}
+                    className={cn(
+                      "w-12 h-6 rounded-full relative transition-all duration-300",
+                      isDarkMode ? "bg-indigo-600" : "bg-slate-300"
+                    )}
+                  >
+                    <div className={cn(
+                      "absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300",
+                      isDarkMode ? "right-1" : "left-1"
+                    )}></div>
                   </button>
                 </div>
               </div>
@@ -719,7 +1012,10 @@ export default function App() {
             <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <h3 className="text-xl font-bold mb-6 text-rose-600">Danger Zone</h3>
               <p className="text-sm text-slate-500 mb-6">Once you delete your data, there is no going back. Please be certain.</p>
-              <button className="px-6 py-3 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-xl font-bold hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors">
+              <button 
+                onClick={handleDeleteAllTransactions}
+                className="px-6 py-3 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-xl font-bold hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors"
+              >
                 Delete All Transactions
               </button>
             </div>
@@ -731,46 +1027,140 @@ export default function App() {
             <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="font-bold text-lg">Recurring Transactions</h3>
-                <button className="flex items-center gap-2 text-indigo-600 text-sm font-bold">
+                <button 
+                  onClick={() => setIsAddRecurringModalOpen(true)}
+                  className="flex items-center gap-2 text-indigo-600 text-sm font-bold"
+                >
                   <Plus size={16} /> Add New
                 </button>
               </div>
               <div className="space-y-4">
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 rounded-xl flex items-center justify-center">
-                      <IconRenderer name="Home" />
+                {recurringTemplates.map(template => (
+                  <div key={template.id} className={cn("p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl flex items-center justify-between transition-opacity", !template.is_active && "opacity-60")}>
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 rounded-xl flex items-center justify-center">
+                        <IconRenderer name={template.category_icon || 'Clock'} />
+                      </div>
+                      <div>
+                        <p className="font-bold">{template.category_name}</p>
+                        <p className="text-xs text-slate-500 capitalize">{template.frequency} • {currency.symbol}{template.amount.toLocaleString()}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-bold">Monthly Rent</p>
-                      <p className="text-xs text-slate-500">Every month • ৳1,200.00</p>
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => toggleRecurringStatus(template.id, !!template.is_active)}
+                        className={cn(
+                          "px-2 py-1 text-[10px] font-bold uppercase rounded-md transition-colors",
+                          template.is_active 
+                            ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600" 
+                            : "bg-slate-200 dark:bg-slate-700 text-slate-500"
+                        )}
+                      >
+                        {template.is_active ? 'Active' : 'Paused'}
+                      </button>
+                      <button 
+                        onClick={() => deleteRecurring(template.id)}
+                        className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 text-[10px] font-bold uppercase rounded-md">Active</span>
-                    <button className="p-2 text-slate-400 hover:text-slate-600"><Settings size={18} /></button>
+                ))}
+                {recurringTemplates.length === 0 && (
+                  <div className="py-10 text-center text-slate-400">
+                    <p>No recurring transactions set up yet.</p>
                   </div>
-                </div>
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl flex items-center justify-between opacity-60">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 text-slate-600 rounded-xl flex items-center justify-center">
-                      <IconRenderer name="Tv" />
-                    </div>
-                    <div>
-                      <p className="font-bold">Netflix Subscription</p>
-                      <p className="text-xs text-slate-500">Every month • ৳15.99</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="px-2 py-1 bg-slate-200 dark:bg-slate-700 text-slate-500 text-[10px] font-bold uppercase rounded-md">Paused</span>
-                    <button className="p-2 text-slate-400 hover:text-slate-600"><Settings size={18} /></button>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
         )}
       </main>
+
+      {/* Add Recurring Modal */}
+      {isAddRecurringModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom md:zoom-in duration-300 max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center shrink-0">
+              <h3 className="text-xl font-bold">Add Recurring Transaction</h3>
+              <button onClick={() => setIsAddRecurringModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddRecurring} className="p-6 space-y-5 overflow-y-auto">
+              <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                <button 
+                  type="button"
+                  onClick={() => setNewRecurring({...newRecurring, type: 'expense'})}
+                  className={cn("flex-1 py-2 rounded-lg text-sm font-bold transition-all", newRecurring.type === 'expense' ? "bg-white dark:bg-slate-700 text-rose-600 shadow-sm" : "text-slate-500")}
+                >
+                  Expense
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setNewRecurring({...newRecurring, type: 'income'})}
+                  className={cn("flex-1 py-2 rounded-lg text-sm font-bold transition-all", newRecurring.type === 'income' ? "bg-white dark:bg-slate-700 text-emerald-600 shadow-sm" : "text-slate-500")}
+                >
+                  Income
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-slate-400">{currency.symbol}</span>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    autoFocus
+                    value={newRecurring.amount}
+                    onChange={(e) => setNewRecurring({...newRecurring, amount: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full pl-10 pr-4 py-4 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl text-3xl font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Category</label>
+                  <select 
+                    value={newRecurring.category_id}
+                    onChange={(e) => setNewRecurring({...newRecurring, category_id: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
+                  >
+                    <option value="">Select</option>
+                    {categories.filter(c => c.type === newRecurring.type).map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Frequency</label>
+                  <select 
+                    value={newRecurring.frequency}
+                    onChange={(e) => setNewRecurring({...newRecurring, frequency: e.target.value as any})}
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+              </div>
+
+              <button 
+                type="submit"
+                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none"
+              >
+                Save Recurring Template
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Add Transaction Modal */}
       {isAddModalOpen && (
@@ -804,7 +1194,7 @@ export default function App() {
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</label>
                 <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-slate-400">৳</span>
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-slate-400">{currency.symbol}</span>
                   <input 
                     type="number" 
                     step="0.01"
@@ -928,7 +1318,7 @@ export default function App() {
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Initial Balance</label>
                 <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">৳</span>
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currency.symbol}</span>
                   <input 
                     type="number" 
                     step="0.01"
@@ -946,6 +1336,144 @@ export default function App() {
                 className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none"
               >
                 Add Bank Account
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Budget Modal */}
+      {isAddBudgetModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-bold">Set Monthly Budget</h3>
+              <button onClick={() => setIsAddBudgetModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handleAddBudget} className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Category</label>
+                <select 
+                  required
+                  value={newBudget.category_id}
+                  onChange={(e) => setNewBudget({...newBudget, category_id: e.target.value})}
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="">Select Category</option>
+                  {categories.filter(c => c.type === 'expense').map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Monthly Limit</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currency.symbol}</span>
+                  <input 
+                    type="number" 
+                    required
+                    value={newBudget.amount}
+                    onChange={(e) => setNewBudget({...newBudget, amount: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl text-xl font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+              <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none">
+                Save Budget
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Savings Goal Modal */}
+      {isAddSavingsModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-bold">New Savings Goal</h3>
+              <button onClick={() => setIsAddSavingsModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handleAddSavings} className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Goal Name</label>
+                <input 
+                  type="text" 
+                  required
+                  value={newSavings.name}
+                  onChange={(e) => setNewSavings({...newSavings, name: e.target.value})}
+                  placeholder="e.g., New Car, Vacation"
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Target Amount</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currency.symbol}</span>
+                  <input 
+                    type="number" 
+                    required
+                    value={newSavings.target_amount}
+                    onChange={(e) => setNewSavings({...newSavings, target_amount: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl text-xl font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Initial Savings (Optional)</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currency.symbol}</span>
+                  <input 
+                    type="number" 
+                    value={newSavings.current_amount}
+                    onChange={(e) => setNewSavings({...newSavings, current_amount: e.target.value})}
+                    placeholder="0.00"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl text-xl font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+              <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none">
+                Create Goal
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Funds Modal */}
+      {isAddFundsModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-bold">Add Funds to {selectedGoal?.name}</h3>
+              <button onClick={() => setIsAddFundsModalOpen(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            <form onSubmit={handleAddFunds} className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Amount to Add</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currency.symbol}</span>
+                  <input 
+                    type="number" 
+                    required
+                    autoFocus
+                    value={addFundsAmount}
+                    onChange={(e) => setAddFundsAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border-none rounded-xl text-xl font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+              <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none">
+                Confirm Deposit
               </button>
             </form>
           </div>
@@ -996,7 +1524,7 @@ function NavItem({ active, onClick, icon, label }: { active: boolean, onClick: (
   );
 }
 
-function StatCard({ title, amount, icon, isPercent, color }: { title: string, amount: number, icon: React.ReactNode, isPercent?: boolean, color: string }) {
+function StatCard({ title, amount, icon, isPercent, color, currencySymbol }: { title: string, amount: number, icon: React.ReactNode, isPercent?: boolean, color: string, currencySymbol: string }) {
   const colorClasses: Record<string, string> = {
     indigo: "bg-indigo-50 dark:bg-indigo-900/20",
     emerald: "bg-emerald-50 dark:bg-emerald-900/20",
@@ -1014,13 +1542,13 @@ function StatCard({ title, amount, icon, isPercent, color }: { title: string, am
       </div>
       <p className="text-xs md:text-sm text-slate-500 font-semibold uppercase tracking-wider">{title}</p>
       <p className="text-xl md:text-2xl font-bold mt-1 tracking-tight">
-        {isPercent ? `${amount.toFixed(1)}%` : `৳${amount.toLocaleString()}`}
+        {isPercent ? `${amount.toFixed(1)}%` : `${currencySymbol}${amount.toLocaleString()}`}
       </p>
     </div>
   );
 }
 
-function TransactionItem({ tx, onDelete }: { tx: Transaction, onDelete: (id: number) => void | Promise<void>, key?: React.Key }) {
+function TransactionItem({ tx, onDelete, currencySymbol }: { tx: Transaction, onDelete: (id: number) => void | Promise<void>, currencySymbol: string, key?: React.Key }) {
   return (
     <div className="flex items-center justify-between group py-1">
       <div className="flex items-center gap-4">
@@ -1067,7 +1595,7 @@ function TransactionItem({ tx, onDelete }: { tx: Transaction, onDelete: (id: num
             "font-bold text-lg tracking-tight", 
             tx.type === 'income' ? "text-emerald-600" : "text-rose-600"
           )}>
-            {tx.type === 'income' ? '+' : '-'}৳{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            {tx.type === 'income' ? '+' : '-'}{currencySymbol}{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
         </div>
         
