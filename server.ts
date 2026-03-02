@@ -25,84 +25,89 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS categories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL, -- 'income' or 'expense'
-    icon TEXT,
-    color TEXT,
-    is_default INTEGER DEFAULT 0
-  );
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL, -- 'income' or 'expense'
+      icon TEXT,
+      color TEXT,
+      is_default INTEGER DEFAULT 0
+    );
 
-  CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount REAL NOT NULL,
-    type TEXT NOT NULL,
-    category_id INTEGER,
-    date TEXT NOT NULL,
-    notes TEXT,
-    is_recurring INTEGER DEFAULT 0,
-    FOREIGN KEY (category_id) REFERENCES categories (id)
-  );
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      amount REAL NOT NULL,
+      type TEXT NOT NULL,
+      category_id INTEGER,
+      date TEXT NOT NULL,
+      notes TEXT,
+      is_recurring INTEGER DEFAULT 0,
+      FOREIGN KEY (category_id) REFERENCES categories (id)
+    );
 
-  CREATE TABLE IF NOT EXISTS budgets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category_id INTEGER NOT NULL,
-    amount REAL NOT NULL,
-    month INTEGER NOT NULL,
-    year INTEGER NOT NULL,
-    FOREIGN KEY (category_id) REFERENCES categories (id)
-  );
+    CREATE TABLE IF NOT EXISTS budgets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      month INTEGER NOT NULL,
+      year INTEGER NOT NULL,
+      FOREIGN KEY (category_id) REFERENCES categories (id)
+    );
 
-  CREATE TABLE IF NOT EXISTS savings_goals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    target_amount REAL NOT NULL,
-    current_amount REAL DEFAULT 0,
-    deadline TEXT
-  );
+    CREATE TABLE IF NOT EXISTS savings_goals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      target_amount REAL NOT NULL,
+      current_amount REAL DEFAULT 0,
+      deadline TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS recurring_templates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    amount REAL NOT NULL,
-    type TEXT NOT NULL,
-    category_id INTEGER,
-    frequency TEXT NOT NULL, -- 'daily', 'weekly', 'monthly'
-    last_executed TEXT,
-    is_active INTEGER DEFAULT 1,
-    FOREIGN KEY (category_id) REFERENCES categories (id)
-  );
+    CREATE TABLE IF NOT EXISTS recurring_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      amount REAL NOT NULL,
+      type TEXT NOT NULL,
+      category_id INTEGER,
+      frequency TEXT NOT NULL, -- 'daily', 'weekly', 'monthly'
+      last_executed TEXT,
+      is_active INTEGER DEFAULT 1,
+      FOREIGN KEY (category_id) REFERENCES categories (id)
+    );
 
-  CREATE TABLE IF NOT EXISTS bank_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    bank_name TEXT NOT NULL,
-    account_number TEXT,
-    balance REAL DEFAULT 0,
-    type TEXT DEFAULT 'savings',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      bank_name TEXT NOT NULL,
+      account_number TEXT,
+      balance REAL DEFAULT 0,
+      type TEXT DEFAULT 'savings',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    name TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    name TEXT NOT NULL,
-    path TEXT NOT NULL,
-    size INTEGER,
-    type TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (id)
-  );
-`);
+    CREATE TABLE IF NOT EXISTS files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      size INTEGER,
+      type TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    );
+  `);
+  console.log("Database initialized successfully");
+} catch (error) {
+  console.error("Database initialization error:", error);
+}
 
 // Seed default categories if empty or missing
 const seedCategories = () => {
@@ -155,6 +160,21 @@ async function startServer() {
   app.use(express.json());
   app.use("/public", express.static("public"));
 
+  // Request logger
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`, req.body);
+    next();
+  });
+
+  app.get("/api/health", (req, res) => {
+    try {
+      const usersCount = db.prepare("SELECT COUNT(*) as count FROM users").get();
+      res.json({ status: "ok", usersCount });
+    } catch (error: any) {
+      res.status(500).json({ status: "error", message: error.message });
+    }
+  });
+
   // Multer setup for general files
 const fileStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -184,8 +204,13 @@ const uploadFile = multer({ storage: fileStorage });
     try {
       const result = db.prepare("INSERT INTO users (email, password, name) VALUES (?, ?, ?)").run(email, password, name);
       res.json({ success: true, user: { id: result.lastInsertRowid, email, name } });
-    } catch (e) {
-      res.status(400).json({ success: false, message: "User already exists" });
+    } catch (e: any) {
+      console.error("Registration error:", e);
+      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || e.message.includes('UNIQUE constraint failed')) {
+        res.status(400).json({ success: false, message: "User already exists" });
+      } else {
+        res.status(500).json({ success: false, message: "Internal server error: " + e.message });
+      }
     }
   });
 

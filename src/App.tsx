@@ -45,6 +45,7 @@ import {
 } from 'recharts';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, subMonths } from 'date-fns';
 import { cn } from './types';
+import { supabase } from './lib/supabase';
 import type { Category, Transaction, Budget, SavingsGoal, RecurringTemplate, BankAccount, FileAsset, User } from './types';
 
 // Icons mapping for dynamic rendering
@@ -389,26 +390,77 @@ export default function App() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
+    
+    // Check if Supabase is configured
+    const isSupabaseConfigured = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
+    
+    if (isSupabaseConfigured) {
+      console.log(`Attempting ${authMode} with Supabase`);
+      try {
+        let result;
+        if (authMode === 'login') {
+          result = await supabase.auth.signInWithPassword({
+            email: authForm.email,
+            password: authForm.password,
+          });
+        } else {
+          result = await supabase.auth.signUp({
+            email: authForm.email,
+            password: authForm.password,
+            options: {
+              data: {
+                name: authForm.name,
+              }
+            }
+          });
+        }
+
+        if (result.error) {
+          setAuthError(result.error.message);
+        } else if (result.data.user) {
+          const userData = {
+            id: result.data.user.id,
+            email: result.data.user.email,
+            name: result.data.user.user_metadata?.name || authForm.name,
+          };
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+        }
+        return;
+      } catch (error) {
+        console.error('Supabase Auth error:', error);
+        setAuthError('Supabase authentication failed. Check your configuration.');
+        return;
+      }
+    }
+
     const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    console.log(`Attempting ${authMode} at ${endpoint}`, authForm);
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(authForm)
       });
+      console.log('Response status:', res.status);
       const data = await res.json();
+      console.log('Response data:', data);
       if (data.success) {
         setUser(data.user);
         localStorage.setItem('user', JSON.stringify(data.user));
       } else {
         setAuthError(data.message || 'Authentication failed');
       }
-    } catch (error) {
-      setAuthError('Server error. Please try again.');
+    } catch (error: any) {
+      console.error('Auth error:', error);
+      setAuthError(`Connection error: ${error.message || 'Please check if the server is running'}`);
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (import.meta.env.VITE_SUPABASE_URL) {
+      await supabase.auth.signOut();
+    }
     setUser(null);
     localStorage.removeItem('user');
     setActiveTab('dashboard');
@@ -771,10 +823,16 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={() => { setNewTx({...newTx, type: 'income'}); setIsAddModalOpen(true); }}
+              className="hidden md:flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-emerald-200 dark:shadow-none"
+            >
+              <TrendingUp size={20} /> Add Income
+            </button>
+            <button 
+              onClick={() => { setNewTx({...newTx, type: 'expense'}); setIsAddModalOpen(true); }}
               className="hidden md:flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-indigo-200 dark:shadow-none"
             >
-              <Plus size={20} /> Add Transaction
+              <Plus size={20} /> Add Expense
             </button>
           </div>
         </header>
@@ -857,23 +915,44 @@ export default function App() {
               </div>
             </div>
 
-            {/* Recent Transactions */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="font-bold text-lg">Recent Transactions</h3>
-                <button onClick={() => setActiveTab('transactions')} className="text-indigo-600 text-sm font-semibold flex items-center gap-1">
-                  View All <ChevronRight size={16} />
-                </button>
+            {/* Recent Transactions & Income */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-bold text-lg">Recent Transactions</h3>
+                  <button onClick={() => setActiveTab('transactions')} className="text-indigo-600 text-sm font-semibold flex items-center gap-1">
+                    View All <ChevronRight size={16} />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {transactions.filter(tx => tx.type === 'expense').slice(0, 5).map((tx) => (
+                    <TransactionItem key={tx.id} tx={tx} onDelete={deleteTransaction} currencySymbol={currency.symbol} />
+                  ))}
+                  {transactions.filter(tx => tx.type === 'expense').length === 0 && (
+                    <div className="py-10 text-center text-slate-400">
+                      <p>No expenses yet.</p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="space-y-4">
-                {transactions.slice(0, 5).map((tx) => (
-                  <TransactionItem key={tx.id} tx={tx} onDelete={deleteTransaction} currencySymbol={currency.symbol} />
-                ))}
-                {transactions.length === 0 && (
-                  <div className="py-10 text-center text-slate-400">
-                    <p>No transactions yet. Start by adding one!</p>
-                  </div>
-                )}
+
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-bold text-lg">Recent Income</h3>
+                  <button onClick={() => setActiveTab('transactions')} className="text-emerald-600 text-sm font-semibold flex items-center gap-1">
+                    View All <ChevronRight size={16} />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {transactions.filter(tx => tx.type === 'income').slice(0, 5).map((tx) => (
+                    <TransactionItem key={tx.id} tx={tx} onDelete={deleteTransaction} currencySymbol={currency.symbol} />
+                  ))}
+                  {transactions.filter(tx => tx.type === 'income').length === 0 && (
+                    <div className="py-10 text-center text-slate-400">
+                      <p>No income tracked yet.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1220,6 +1299,44 @@ export default function App() {
             </div>
 
             <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">Supabase Connection</h3>
+                {import.meta.env.VITE_SUPABASE_URL ? (
+                  <span className="px-3 py-1 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 text-xs font-bold uppercase rounded-full flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                    Connected
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 text-xs font-bold uppercase rounded-full">
+                    Not Configured
+                  </span>
+                )}
+              </div>
+              
+              <div className="space-y-4">
+                <p className="text-sm text-slate-500">
+                  {import.meta.env.VITE_SUPABASE_URL 
+                    ? `Your application is connected to Supabase project: ${import.meta.env.VITE_SUPABASE_URL.split('//')[1].split('.')[0]}`
+                    : "Connect your application to Supabase for cloud sync and authentication."}
+                </p>
+                
+                {!import.meta.env.VITE_SUPABASE_URL && (
+                  <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 rounded-2xl">
+                    <div className="flex gap-3">
+                      <AlertCircle className="text-amber-600 shrink-0" size={20} />
+                      <div>
+                        <p className="text-sm font-bold text-amber-800 dark:text-amber-400">Configuration Required</p>
+                        <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">
+                          Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment variables to enable Supabase features.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <h3 className="text-xl font-bold mb-6 text-rose-600">Danger Zone</h3>
               <p className="text-sm text-slate-500 mb-6">Once you delete your data, there is no going back. Please be certain.</p>
               <button 
@@ -1468,7 +1585,9 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Category</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    {newTx.type === 'income' ? 'Income Source' : 'Category'}
+                  </label>
                   <select 
                     value={newTx.category_id}
                     onChange={(e) => setNewTx({...newTx, category_id: e.target.value})}
