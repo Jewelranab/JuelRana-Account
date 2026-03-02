@@ -162,15 +162,17 @@ async function startServer() {
 
   // Request logger
   app.use((req, res, next) => {
-    console.log(`${req.method} ${req.url}`, req.body);
+    console.log(`[Server] ${req.method} ${req.url}`, req.body);
     next();
   });
 
+  // Health check
   app.get("/api/health", (req, res) => {
     try {
       const usersCount = db.prepare("SELECT COUNT(*) as count FROM users").get();
       res.json({ status: "ok", usersCount });
     } catch (error: any) {
+      console.error("[Server] Health check failed:", error);
       res.status(500).json({ status: "error", message: error.message });
     }
   });
@@ -360,6 +362,16 @@ const uploadFile = multer({ storage: fileStorage });
 
   app.post("/api/upload-profile", upload.single("profile"), (req, res) => {
     res.json({ success: true, url: "/public/profile.jpg?t=" + Date.now() });
+  });
+
+  // Global Error Handler for API routes
+  app.use("/api", (err: any, req: any, res: any, next: any) => {
+    console.error("[Server] API Error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Internal server error", 
+      error: err.message 
+    });
   });
 
   // Vite middleware for development

@@ -163,25 +163,46 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      const [txRes, catRes, budgetRes, savingsRes, bankRes, recurringRes, fileRes] = await Promise.all([
-        fetch('/api/transactions'),
-        fetch('/api/categories'),
-        fetch('/api/budgets'),
-        fetch('/api/savings'),
-        fetch('/api/bank-accounts'),
-        fetch('/api/recurring'),
-        fetch('/api/files')
-      ]);
+      const endpoints = [
+        '/api/transactions',
+        '/api/categories',
+        '/api/budgets',
+        '/api/savings',
+        '/api/bank-accounts',
+        '/api/recurring',
+        '/api/files'
+      ];
+
+      const responses = await Promise.all(endpoints.map(url => fetch(url)));
       
-      setTransactions(await txRes.json());
-      setCategories(await catRes.json());
-      setBudgets(await budgetRes.json());
-      setSavings(await savingsRes.json());
-      setBankAccounts(await bankRes.json());
-      setRecurringTemplates(await recurringRes.json());
-      setFiles(await fileRes.json());
+      // Check for non-JSON responses
+      for (let i = 0; i < responses.length; i++) {
+        const res = responses[i];
+        if (!res.ok) {
+          console.error(`[App] Fetch failed for ${endpoints[i]}: ${res.status}`);
+          continue;
+        }
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || contentType.indexOf("application/json") === -1) {
+          const text = await res.text();
+          console.error(`[App] Non-JSON response for ${endpoints[i]}:`, text.substring(0, 100));
+          continue;
+        }
+
+        const data = await res.json();
+        switch (i) {
+          case 0: setTransactions(data); break;
+          case 1: setCategories(data); break;
+          case 2: setBudgets(data); break;
+          case 3: setSavings(data); break;
+          case 4: setBankAccounts(data); break;
+          case 5: setRecurringTemplates(data); break;
+          case 6: setFiles(data); break;
+        }
+      }
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('[App] Error fetching data:', error);
     } finally {
       setLoading(false);
     }
@@ -452,17 +473,23 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(authForm)
       });
-      console.log('Response status:', res.status);
-      const data = await res.json();
-      console.log('Response data:', data);
-      if (data.success) {
-        setUser(data.user);
-        localStorage.setItem('user', JSON.stringify(data.user));
+      
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (data.success) {
+          setUser(data.user);
+          localStorage.setItem('user', JSON.stringify(data.user));
+        } else {
+          setAuthError(data.message || 'Authentication failed');
+        }
       } else {
-        setAuthError(data.message || 'Authentication failed');
+        const text = await res.text();
+        console.error('[App] Non-JSON response from auth:', text.substring(0, 100));
+        setAuthError(`Server error (${res.status}). Please check server logs.`);
       }
     } catch (error: any) {
-      console.error('Auth error:', error);
+      console.error('[App] Auth error:', error);
       setAuthError(`Connection error: ${error.message || 'Please check if the server is running'}`);
     }
   };
