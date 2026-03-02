@@ -216,6 +216,18 @@ const uploadFile = multer({ storage: fileStorage });
     }
   });
 
+  app.post("/api/auth/forgot-password", (req, res) => {
+    const { email } = req.body;
+    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    if (user) {
+      // In a real app, you'd send an email here.
+      // For this demo, we'll just return success.
+      res.json({ success: true, message: "Password reset instructions sent to your email." });
+    } else {
+      res.status(404).json({ success: false, message: "Email not found" });
+    }
+  });
+
   app.get("/api/files", (req, res) => {
     const files = db.prepare("SELECT * FROM files ORDER BY created_at DESC").all();
     res.json(files);

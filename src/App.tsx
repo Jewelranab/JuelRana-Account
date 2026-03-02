@@ -67,9 +67,10 @@ export default function App() {
       return null;
     }
   });
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
 
   const [currency, setCurrency] = useState<{code: string, symbol: string}>(() => {
     try {
@@ -421,6 +422,7 @@ export default function App() {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
+    setAuthSuccess('');
     
     // Check if Supabase is configured
     const isSupabaseConfigured = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -434,7 +436,7 @@ export default function App() {
             email: authForm.email,
             password: authForm.password,
           });
-        } else {
+        } else if (authMode === 'register') {
           result = await supabase.auth.signUp({
             email: authForm.email,
             password: authForm.password,
@@ -444,15 +446,21 @@ export default function App() {
               }
             }
           });
+        } else {
+          // Forgot password with Supabase
+          result = await supabase.auth.resetPasswordForEmail(authForm.email);
+          if (!result.error) {
+            setAuthSuccess('Password reset email sent!');
+          }
         }
 
-        if (result.error) {
+        if (result && result.error) {
           setAuthError(result.error.message);
-        } else if (result.data.user) {
+        } else if (result && (result as any).data?.user) {
           const userData = {
-            id: result.data.user.id,
-            email: result.data.user.email,
-            name: result.data.user.user_metadata?.name || authForm.name,
+            id: (result as any).data.user.id,
+            email: (result as any).data.user.email,
+            name: (result as any).data.user.user_metadata?.name || authForm.name,
           };
           setUser(userData);
           localStorage.setItem('user', JSON.stringify(userData));
@@ -465,7 +473,7 @@ export default function App() {
       }
     }
 
-    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const endpoint = authMode === 'login' ? '/api/auth/login' : authMode === 'register' ? '/api/auth/register' : '/api/auth/forgot-password';
     console.log(`Attempting ${authMode} at ${endpoint}`, authForm);
     try {
       const res = await fetch(endpoint, {
@@ -478,8 +486,12 @@ export default function App() {
       if (contentType && contentType.indexOf("application/json") !== -1) {
         const data = await res.json();
         if (data.success) {
-          setUser(data.user);
-          localStorage.setItem('user', JSON.stringify(data.user));
+          if (authMode === 'forgot') {
+            setAuthSuccess(data.message);
+          } else {
+            setUser(data.user);
+            localStorage.setItem('user', JSON.stringify(data.user));
+          }
         } else {
           setAuthError(data.message || 'Authentication failed');
         }
@@ -495,7 +507,10 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (import.meta.env.VITE_SUPABASE_URL) {
+    if (!confirm('Are you sure you want to logout?')) return;
+    
+    const isSupabaseConfigured = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (isSupabaseConfigured) {
       await supabase.auth.signOut();
     }
     setUser(null);
@@ -663,13 +678,13 @@ export default function App() {
 
         <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-8">
           <button 
-            onClick={() => setAuthMode('login')}
+            onClick={() => { setAuthMode('login'); setAuthError(''); setAuthSuccess(''); }}
             className={cn("flex-1 py-2.5 rounded-lg text-sm font-bold transition-all", authMode === 'login' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500")}
           >
             Login
           </button>
           <button 
-            onClick={() => setAuthMode('register')}
+            onClick={() => { setAuthMode('register'); setAuthError(''); setAuthSuccess(''); }}
             className={cn("flex-1 py-2.5 rounded-lg text-sm font-bold transition-all", authMode === 'register' ? "bg-white dark:bg-slate-700 text-indigo-600 shadow-sm" : "text-slate-500")}
           >
             Register
@@ -677,6 +692,12 @@ export default function App() {
         </div>
 
         <form onSubmit={handleAuth} className="space-y-5">
+          {authMode === 'forgot' && (
+            <div className="mb-4">
+              <h2 className="text-xl font-bold mb-2">Reset Password</h2>
+              <p className="text-sm text-slate-500">Enter your email address and we'll send you instructions to reset your password.</p>
+            </div>
+          )}
           {authMode === 'register' && (
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Full Name</label>
@@ -707,20 +728,33 @@ export default function App() {
               />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Password</label>
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="password" 
-                required
-                value={authForm.password}
-                onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
-                placeholder="••••••••"
-                className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
-              />
+          {authMode !== 'forgot' && (
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center ml-1">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Password</label>
+                {authMode === 'login' && (
+                  <button 
+                    type="button" 
+                    onClick={() => { setAuthMode('forgot'); setAuthError(''); setAuthSuccess(''); }}
+                    className="text-xs font-bold text-indigo-600 hover:underline"
+                  >
+                    Forgot Password?
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="password" 
+                  required
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
+                  placeholder="••••••••"
+                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-950 border-none rounded-2xl font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {authError && (
             <div className="flex items-center gap-2 p-4 bg-rose-50 dark:bg-rose-900/20 text-rose-600 rounded-2xl text-sm font-medium">
@@ -729,12 +763,29 @@ export default function App() {
             </div>
           )}
 
+          {authSuccess && (
+            <div className="flex items-center gap-2 p-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-2xl text-sm font-medium">
+              <Check size={18} />
+              {authSuccess}
+            </div>
+          )}
+
           <button 
             type="submit"
             className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-lg transition-all shadow-lg shadow-indigo-200 dark:shadow-none"
           >
-            {authMode === 'login' ? 'Sign In' : 'Create Account'}
+            {authMode === 'login' ? 'Sign In' : authMode === 'register' ? 'Create Account' : 'Send Reset Link'}
           </button>
+
+          {authMode === 'forgot' && (
+            <button 
+              type="button"
+              onClick={() => { setAuthMode('login'); setAuthError(''); setAuthSuccess(''); }}
+              className="w-full text-center text-sm font-bold text-slate-500 hover:text-indigo-600"
+            >
+              Back to Login
+            </button>
+          )}
         </form>
       </div>
     </div>
@@ -1333,6 +1384,16 @@ export default function App() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+              <h3 className="text-xl font-bold mb-6">Account Actions</h3>
+              <button 
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-2xl font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+              >
+                <LogOut size={20} /> Logout from Account
+              </button>
             </div>
 
             <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">

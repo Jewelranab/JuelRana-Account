@@ -42,6 +42,7 @@ export const supabase = {
         signInWithPassword: async () => ({ error: { message: 'Supabase not configured' } }),
         signUp: async () => ({ error: { message: 'Supabase not configured' } }),
         signOut: async () => ({ error: { message: 'Supabase not configured' } }),
+        resetPasswordForEmail: async () => ({ error: { message: 'Supabase not configured' } }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
         getSession: async () => ({ data: { session: null }, error: null }),
       };
