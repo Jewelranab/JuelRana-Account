@@ -59,16 +59,26 @@ const IconRenderer = ({ name, className }: { name: string, className?: string })
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'budgets' | 'savings' | 'settings' | 'recurring' | 'banks' | 'files'>('dashboard');
   const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      console.error('Error parsing user from localStorage:', e);
+      return null;
+    }
   });
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
 
   const [currency, setCurrency] = useState<{code: string, symbol: string}>(() => {
-    const saved = localStorage.getItem('currency');
-    return saved ? JSON.parse(saved) : { code: 'BDT', symbol: '৳' };
+    try {
+      const saved = localStorage.getItem('currency');
+      return saved ? JSON.parse(saved) : { code: 'BDT', symbol: '৳' };
+    } catch (e) {
+      console.error('Error parsing currency from localStorage:', e);
+      return { code: 'BDT', symbol: '৳' };
+    }
   });
   const [isDarkMode, setIsDarkMode] = useState(() => {
     return localStorage.getItem('darkMode') === 'true';
